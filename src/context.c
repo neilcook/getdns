@@ -141,6 +141,14 @@ static void set_ub_edns_maximum_udp_payload_size(struct getdns_context*,
 /* Stuff to make it compile pedantically */
 #define RETURN_IF_NULL(ptr, code) if(ptr == NULL) return code;
 
+#ifdef HAVE_PTHREADS
+#include "pthread.h"
+#include <stdbool.h>
+/* mutex to protect SSL_library_init() which is not thread-safe
+   and also boolean to ensure we call it only once */
+static pthread_mutex_t ssl_lock = PTHREAD_MUTEX_INITIALIZER;
+static bool ssl_initialized = false;
+#endif /* HAVE_PTHREADS */
 
 #ifdef USE_WINSOCK
 /* For windows, the CA trust store is not read by openssl. 
@@ -1297,8 +1305,20 @@ getdns_context_create_with_extended_memory_functions(
 	/* Unbound needs SSL to be init'ed this early when TLS is used. However we
 	 * don't know that till later so we will have to do this every time. */
 
-	if ((set_from_os & 2) == 0)
+	if ((set_from_os & 2) == 0) {
+#ifdef HAVE_PTHREADS
+		pthread_mutex_lock(&ssl_lock);
+		if (ssl_initialized != true) {
+			/* only initialize OpenSSL once */
+			SSL_library_init();
+			ssl_initialized = true;
+		}
+		pthread_mutex_unlock(&ssl_lock);
+#else
+	/* XXX - do non-threads mutex locking here */
 		SSL_library_init();
+#endif
+	}
 
 #ifdef HAVE_LIBUNBOUND
 	result->unbound_ctx = NULL;
